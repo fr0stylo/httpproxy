@@ -62,7 +62,8 @@ func (r *Proxy) proxyRequest(con net.Conn) {
 		return
 	}
 
-	log.Printf("[INFO] Url: %s", req.Host)
+	r.requestLogger.Log(req)
+
 	if req.Method == http.MethodConnect {
 		r.handleSecureHttp(con, req, func(sent int64) {
 			r.usageReportChan <- NewUsageReport(proxyAuth, sent)

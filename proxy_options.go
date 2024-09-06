@@ -1,20 +1,23 @@
 package main
 
-type proxyOptions struct {
-	port        int64
-	dataLimiter DataSizer
-	authorizer  Authorizer
+import "net/http"
+
+type RequestLogger interface {
+	Log(r *http.Request)
 }
 
-var (
-	DefaultAuthorizer Authorizer = NewBasicAuthorizer()
-	DefaultSizer      DataSizer  = NewDataLimiter(0)
-)
+type proxyOptions struct {
+	port          int64
+	dataLimiter   DataSizer
+	requestLogger RequestLogger
+	authorizer    Authorizer
+}
 
 var DefaultOptions = proxyOptions{
-	port:        8080,
-	dataLimiter: DefaultSizer,
-	authorizer:  DefaultAuthorizer,
+	port:          8080,
+	dataLimiter:   NewDataLimiter(0),
+	authorizer:    NewBasicAuthorizer(),
+	requestLogger: NewConsoleRequestLogger(),
 }
 
 type ProxyOptionsFn func(options *proxyOptions)
@@ -34,5 +37,11 @@ func WithAuthorizer(authorizer Authorizer) ProxyOptionsFn {
 func WithDataLimiter(limiter DataSizer) ProxyOptionsFn {
 	return func(options *proxyOptions) {
 		options.dataLimiter = limiter
+	}
+}
+
+func WithRequestLogger(logger RequestLogger) ProxyOptionsFn {
+	return func(options *proxyOptions) {
+		options.requestLogger = logger
 	}
 }
