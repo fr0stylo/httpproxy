@@ -40,7 +40,7 @@ func GetUserFromContext(ctx context.Context) *User {
 	return nil
 }
 
-func AuthorizerMiddlerate(authorizer Authorizer) ProxyMiddleware {
+func AuthorizerMiddleware(authorizer Authorizer) ProxyMiddleware {
 	return func(handler ProxyHandler) ProxyHandler {
 		return func(ctx context.Context, con net.Conn, req *http.Request) int64 {
 			proxyAuth := req.Header.Get("Proxy-Authorization")
@@ -48,9 +48,7 @@ func AuthorizerMiddlerate(authorizer Authorizer) ProxyMiddleware {
 			if !authorizer.Authorize(proxyAuth) {
 				defer con.Close()
 				log.Printf("[WARN] Authorization failed for request from %s", con.RemoteAddr())
-				httpResponse(con, http.StatusUnauthorized, []byte("Unauthorized"))
-
-				return 0
+				return httpResponse(con, http.StatusUnauthorized, []byte("Unauthorized"))
 			}
 			ctx = context.WithValue(ctx, User{}, User{User: proxyAuth})
 			return handler(ctx, con, req)

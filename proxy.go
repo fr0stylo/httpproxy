@@ -77,8 +77,8 @@ func handlePlainHttp(ctx context.Context, con net.Conn, req *http.Request) (tota
 
 	res := http.Response{
 		StatusCode: proxyRes.StatusCode,
-		ProtoMajor: 1,
-		ProtoMinor: 1,
+		ProtoMajor: req.ProtoMajor,
+		ProtoMinor: req.ProtoMinor,
 	}
 	res.Header = proxyRes.Header.Clone()
 	res.Write(con)

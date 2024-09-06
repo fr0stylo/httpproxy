@@ -17,7 +17,7 @@ func main() {
 	proxy := NewProxy(
 		WithMiddlewares(
 			RequestLoggerMiddleware(NewConsoleRequestLogger()),
-			AuthorizerMiddlerate(NewBasicAuthorizer()),
+			AuthorizerMiddleware(NewBasicAuthorizer()),
 			DataSizerMiddleware(NewDataLimiter(*dataLimit)),
 			HandleSecureHttpMiddleware,
 		))
