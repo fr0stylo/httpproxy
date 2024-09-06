@@ -14,21 +14,12 @@ type ProxyHandler func(ctx context.Context, conn net.Conn, r *http.Request) int6
 type ProxyMiddleware func(handler ProxyHandler) ProxyHandler
 
 type proxyOptions struct {
-	port        int64
 	middlewares []ProxyMiddleware
 }
 
-var DefaultOptions = proxyOptions{
-	port: 8080,
-}
+var DefaultOptions = proxyOptions{}
 
 type ProxyOptionsFn func(options *proxyOptions)
-
-func WithPort(port int64) ProxyOptionsFn {
-	return func(options *proxyOptions) {
-		options.port = port
-	}
-}
 
 func WithMiddlewares(middleware ...ProxyMiddleware) ProxyOptionsFn {
 	return func(options *proxyOptions) {

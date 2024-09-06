@@ -117,8 +117,6 @@ func httpResponse(con net.Conn, status int, body []byte) int64 {
 }
 
 func transfer(destination io.WriteCloser, source io.ReadCloser, usageReport chan int64) {
-	defer destination.Close()
-	defer source.Close()
 	n, _ := io.Copy(destination, source)
 	usageReport <- n
 }
@@ -138,6 +136,8 @@ func HandleSecureHttpMiddleware(next ProxyHandler) ProxyHandler {
 		}
 		resultChan := make(chan int64)
 
+		defer proxy.Close()
+		defer con.Close()
 		go transfer(proxy, con, resultChan)
 		go transfer(con, proxy, resultChan)
 

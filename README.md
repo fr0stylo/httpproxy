@@ -16,6 +16,12 @@ To run project:
 2. Run `make run`
 3. Run favorite http request tool via proxy over 8080 port
 
+In order to use proxy, specify local address for this proxy as HTTP_PROXY example of curl
+
+```shell
+curl -x http://127.0.0.1:8080 -U <USER>:<PASSWORD> <URL> 
+```
+
 ## Testing
 
 To run tests:
