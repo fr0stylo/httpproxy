@@ -11,7 +11,8 @@ type ConsoleRequestLogger struct {
 }
 
 func (c ConsoleRequestLogger) Log(r *http.Request) {
-	log.Print(r.Host)
+	host, _, _ := net.SplitHostPort(r.URL.Host)
+	log.Print(host)
 }
 
 func NewConsoleRequestLogger() *ConsoleRequestLogger {
