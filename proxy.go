@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"io"
 	"log"
 	"net"
@@ -15,13 +16,8 @@ type DataSizer interface {
 	GetUsage(user string) int64
 }
 
-type Authorizer interface {
-	Authorize(user string) bool
-}
-
 type Proxy struct {
 	proxyOptions
-	usageReportChan chan *UsageReport
 }
 
 func NewProxy(optsFn ...ProxyOptionsFn) *Proxy {
@@ -29,7 +25,8 @@ func NewProxy(optsFn ...ProxyOptionsFn) *Proxy {
 	for _, fn := range optsFn {
 		fn(&opts)
 	}
-	return &Proxy{opts, opts.dataLimiter.ConsumeUsage()}
+
+	return &Proxy{opts}
 }
 
 func (r *Proxy) proxyRequest(con net.Conn) {
@@ -44,60 +41,26 @@ func (r *Proxy) proxyRequest(con net.Conn) {
 		return
 	}
 
-	proxyAuth := req.Header.Get("Proxy-Authorization")
-
-	if !r.authorizer.Authorize(proxyAuth) {
-		defer con.Close()
-		log.Printf("[WARN] Authorization failed for request from %s", con.RemoteAddr())
-		httpResponse(con, http.StatusUnauthorized, []byte("Unauthorized"))
-
-		return
-	}
-
-	if r.dataLimiter.IsLimitReached(proxyAuth) {
-		defer con.Close()
-		log.Printf("[WARN] Usage limit reached %s", con.RemoteAddr())
-		httpResponse(con, http.StatusTooManyRequests, []byte("Unauthorized"))
-
-		return
-	}
-
-	r.requestLogger.Log(req)
-
-	if req.Method == http.MethodConnect {
-		r.handleSecureHttp(con, req, func(sent int64) {
-			r.usageReportChan <- NewUsageReport(proxyAuth, sent)
-		})
-	} else {
-		r.handlePlainHttp(con, req, func(sent int64) {
-			r.usageReportChan <- NewUsageReport(proxyAuth, sent)
-		})
-	}
+	method := chainMiddlewares(handlePlainHttp, r.middlewares...)
+	ctx := context.Background()
+	method(ctx, con, req)
 }
 
-func (r *Proxy) handleSecureHttp(con net.Conn, req *http.Request, reporter TransferReporter) {
-	httpResponse(con, http.StatusOK, []byte{})
-
-	proxy, err := net.DialTimeout("tcp", req.URL.Host, 2*time.Hour)
-	if err != nil {
-		defer con.Close()
-		log.Print("[ERROR] Failed to create proxy connection, ", err)
-		httpResponse(con, http.StatusInternalServerError, []byte("Something went wrong"))
-
-		return
+func chainMiddlewares(h ProxyHandler, rest ...ProxyMiddleware) ProxyHandler {
+	if len(rest) == 0 {
+		return h
 	}
 
-	go transfer(proxy, con, reporter)
-	go transfer(con, proxy, reporter)
+	return rest[0](chainMiddlewares(h, rest[1:cap(rest)]...))
 }
 
-func (r *Proxy) handlePlainHttp(con net.Conn, req *http.Request, reporter TransferReporter) {
-	proxyReq, err := http.NewRequest(req.Method, req.URL.String(), req.Body)
+func handlePlainHttp(ctx context.Context, con net.Conn, req *http.Request) (total int64) {
+	proxyReq, err := http.NewRequestWithContext(ctx, req.Method, req.URL.String(), req.Body)
 	if err != nil {
 		log.Print("[ERROR] Failed to create proxy request, ", err)
 		httpResponse(con, http.StatusInternalServerError, []byte("Something went wrong"))
 
-		return
+		return 0
 	}
 
 	proxyReq.Header = req.Header
@@ -107,9 +70,10 @@ func (r *Proxy) handlePlainHttp(con net.Conn, req *http.Request, reporter Transf
 		log.Print("[ERROR] Failed to send request to proxy, ", err)
 		httpResponse(con, http.StatusInternalServerError, []byte("Something went wrong"))
 
-		return
+		return 0
 	}
 	defer proxyRes.Body.Close()
+	total = total + req.ContentLength
 
 	res := http.Response{
 		StatusCode: proxyRes.StatusCode,
@@ -119,7 +83,7 @@ func (r *Proxy) handlePlainHttp(con net.Conn, req *http.Request, reporter Transf
 	res.Header = proxyRes.Header.Clone()
 	res.Write(con)
 	n, _ := io.Copy(con, proxyRes.Body)
-	reporter(n)
+	return total + n
 }
 
 func (r *Proxy) Serve(addr *net.TCPAddr) error {
@@ -140,20 +104,7 @@ func (r *Proxy) Serve(addr *net.TCPAddr) error {
 	}
 }
 
-type TransferReporter = func(sent int64)
-
-func transfer(destination io.WriteCloser, source io.ReadCloser, usageReport TransferReporter) {
-	defer destination.Close()
-	defer source.Close()
-	n, _ := io.Copy(destination, source)
-	usageReport(n)
-}
-
-var (
-	basicAuth = "user:pass"
-)
-
-func httpResponse(con net.Conn, status int, body []byte) {
+func httpResponse(con net.Conn, status int, body []byte) int64 {
 	res := http.Response{
 		StatusCode:    status,
 		ProtoMajor:    1,
@@ -161,5 +112,36 @@ func httpResponse(con net.Conn, status int, body []byte) {
 		ContentLength: int64(len(body)),
 	}
 	res.Write(con)
-	con.Write(body)
+	n, _ := con.Write(body)
+	return int64(n)
+}
+
+func transfer(destination io.WriteCloser, source io.ReadCloser, usageReport chan int64) {
+	defer destination.Close()
+	defer source.Close()
+	n, _ := io.Copy(destination, source)
+	usageReport <- n
+}
+
+func HandleSecureHttpMiddleware(next ProxyHandler) ProxyHandler {
+	return func(ctx context.Context, con net.Conn, req *http.Request) int64 {
+		if req.Method != http.MethodConnect {
+			return next(ctx, con, req)
+		}
+		httpResponse(con, http.StatusOK, []byte{})
+
+		proxy, err := net.DialTimeout("tcp", req.URL.Host, 2*time.Hour)
+		if err != nil {
+			defer con.Close()
+			log.Print("[ERROR] Failed to create proxy connection, ", err)
+			return httpResponse(con, http.StatusInternalServerError, []byte("Something went wrong"))
+		}
+		resultChan := make(chan int64)
+
+		go transfer(proxy, con, resultChan)
+		go transfer(con, proxy, resultChan)
+
+		n := <-resultChan
+		return n + <-resultChan
+	}
 }

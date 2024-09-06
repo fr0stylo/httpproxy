@@ -14,9 +14,14 @@ var (
 func main() {
 	flag.Parse()
 
-	dl := NewDataLimiter(*dataLimit)
-	ba := NewBasicAuthorizer()
-	proxy := NewProxy(WithPort(*port), WithAuthorizer(ba), WithDataLimiter(dl))
+	proxy := NewProxy(
+		WithPort(*port),
+		WithMiddlewares(
+			RequestLoggerMiddleware(NewConsoleRequestLogger()),
+			AuthorizerMiddlerate(NewBasicAuthorizer()),
+			DataSizerMiddleware(NewDataLimiter(*dataLimit)),
+			HandleSecureHttpMiddleware,
+		))
 
 	log.Fatal("Something went really wrong: ", proxy.Serve(&net.TCPAddr{Port: 8080}))
 }

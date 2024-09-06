@@ -1,6 +1,12 @@
 package main
 
-import "sync"
+import (
+	"context"
+	"log"
+	"net"
+	"net/http"
+	"sync"
+)
 
 type DataLimiter struct {
 	usage map[string]int64
@@ -48,4 +54,26 @@ func (r *DataLimiter) GetUsage(user string) int64 {
 
 func NewDataLimiter(limit int64) *DataLimiter {
 	return &DataLimiter{usage: make(map[string]int64), limit: limit, lock: sync.Mutex{}}
+}
+
+func DataSizerMiddleware(sizer DataSizer) ProxyMiddleware {
+	reportChan := sizer.ConsumeUsage()
+	return func(handler ProxyHandler) ProxyHandler {
+		return func(ctx context.Context, con net.Conn, req *http.Request) int64 {
+			user := GetUserFromContext(ctx)
+
+			if sizer.IsLimitReached(user.User) {
+				defer con.Close()
+				log.Printf("[WARN] Usage limit reached %s", con.RemoteAddr())
+				httpResponse(con, http.StatusTooManyRequests, []byte("Unauthorized"))
+
+				return 0
+			}
+			sent := handler(ctx, con, req)
+
+			reportChan <- NewUsageReport(user.User, sent)
+
+			return sent
+		}
+	}
 }
